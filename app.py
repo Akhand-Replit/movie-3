@@ -11,12 +11,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load secrets
-TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+# Load secrets with proper error handling
+try:
+    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+except Exception as e:
+    st.error("TMDB API key not found in secrets. Please check your secrets.toml file.")
+    TMDB_API_KEY = "missing"
 
-# Configure Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    # Configure Gemini API right away to catch errors early
+    genai.configure(api_key=GEMINI_API_KEY)
+except Exception as e:
+    st.error(f"Error configuring Gemini API: {e}. Please check your secrets.toml file.")
+    GEMINI_API_KEY = "missing"
 
 # Apply custom styling for retro UI
 def load_css():
@@ -240,14 +248,29 @@ def show_loading(text="Loading..."):
 # Function to communicate with Gemini API
 def ask_gemini(prompt):
     try:
-        # Configure API key
-        if not genai.configure().api_key:
-            genai.configure(api_key=GEMINI_API_KEY)
+        # Check if API key is missing
+        if GEMINI_API_KEY == "missing":
+            st.session_state.debug_info = "Gemini API key is missing. Using fallback content."
+            return '{"error": "API key missing"}'
             
-        # Create model and generate content
+        # Create model and generate content with error handling
         model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        # Safety check before API call
+        if not model:
+            st.session_state.debug_info = "Failed to create Gemini model"
+            return '{"error": "Model creation failed"}'
+            
+        # Generate content with timeout
         response = model.generate_content(prompt)
-        return response.text
+        
+        # Check if response is valid
+        if response and hasattr(response, 'text'):
+            return response.text
+        else:
+            st.session_state.debug_info = "Empty or invalid response from Gemini"
+            return '{"error": "Invalid response"}'
+            
     except Exception as e:
         st.session_state.debug_info = f"Error in ask_gemini: {str(e)}"
         # If there's an error, return a placeholder response that can be handled by the caller
@@ -484,6 +507,18 @@ def generate_ai_description(title, overview, media_type, reason):
 
 # Display welcome screen
 def show_welcome():
+    # Check API keys first and show warnings if missing
+    if TMDB_API_KEY == "missing" or GEMINI_API_KEY == "missing":
+        st.warning("""
+        ⚠️ **API Keys Missing** ⚠️
+        
+        One or more API keys are missing. The app will work with sample data, but for the full experience:
+        
+        1. Get a TMDB API key from: https://www.themoviedb.org/settings/api
+        2. Get a Gemini API key from: https://aistudio.google.com/app/apikey
+        3. Update the `.streamlit/secrets.toml` file with your keys
+        """)
+    
     st.markdown("""
     <div class="title-text">
         SVOMO RECOMMENDATION<span class="blinking-cursor">_</span>
@@ -510,15 +545,11 @@ def show_welcome():
             "Indie Film Appreciator"
         ]
         
-        # Debug information
-        st.write(f"Current step: {st.session_state.step}")
-        
         for persona in persona_options:
             if st.button(persona, key=f"persona_{persona}", use_container_width=True):
                 st.session_state.persona = persona
                 st.session_state.step = 'generating_questions'
-                # Force state update
-                st.write(f"Selected: {persona}")
+                st.session_state.debug_info = f"Selected persona: {persona}, moving to generating_questions"
                 st.rerun()
     
     # Credits
